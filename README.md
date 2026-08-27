@@ -1,142 +1,147 @@
-# Step 3 — intercept
+# Coach for ChatGPT
 
-Four files. `/coach:status`, `/coach:feedback` and `/coach:dashboard` are now
-caught before ChatGPT sees them, and answered with a bubble in the thread.
+A Chrome extension that adds `/coach:` slash commands to chatgpt.com.
 
-Still no network. Still no Python. The responses are literal strings in
-`content.js`.
+Commands typed into ChatGPT's composer are caught by the extension and answered
+locally, in a bubble in the thread. The model is never asked. This is the
+ChatGPT counterpart to the Coach plugin for Claude Code, which gets the same
+effect from a hook system that a web page doesn't have.
 
-## Load it
+## Commands
 
-Same as step 2, but this is a **different folder**, so load it as a new
-extension — and remove or disable the step 2 card first, or both will fire on
-every Enter.
-
-1. `chrome://extensions` → turn off or remove "Coach — step 2"
-2. Load unpacked → pick this folder
-3. Reload the chatgpt.com tab
-4. Console shows `[coach] step 3 ready — /coach:status /coach:feedback /coach:dashboard`
-
-## Test it
-
-| Type this | Expect |
+| Command | Answers with |
 |---|---|
-| `/coach:status` | bubble appears, **nothing sent to the model** |
-| `/coach:feedback` | its own bubble |
-| `/coach:dashboard` | its own bubble |
-| `/coach:staus` | amber bubble listing the three real commands |
-| `/coach:` | amber bubble (empty name is not a command) |
-| `I ran /coach:status today` | **sends to the model** as a normal prompt |
-| `/coach:status now` | sends to the model — trailing text means it isn't a bare command |
-| `hello` | sends normally |
-| `/coach:status`, then click send instead of Enter | same bubble, still not sent |
-| click × on a bubble | bubble disappears, nothing else happens |
+| `/coach:status` | your progress toward the next AI profile |
+| `/coach:feedback` | feedback on your last prompt |
+| `/coach:dashboard` | a link to the management dashboard |
 
-Rows six and seven are the ones worth being fussy about. If those get
-swallowed, the `^...$` anchoring isn't working and you'd lose the ability to
-ever discuss your own tool in ChatGPT.
+Anything else beginning with `/coach:` gets an amber bubble listing the three
+real commands. It is not passed to the model either — a near miss like
+`/coach:staus` would only produce a confused reply about a plugin ChatGPT
+doesn't have.
 
-Row nine matters because people reach for the mouse without thinking.
+## Why the model never sees the command
 
-## Done when
+The model isn't in the browser. Text in the composer exists only on your
+machine until ChatGPT's own JavaScript builds an HTTPS request and sends it.
+The extension prevents that function from ever being called, so there is no
+request, no stored message, and no model invocation — nothing to filter and
+nothing to bill.
 
-The three commands produce bubbles, normal prompts still reach the model, and
-the composer empties after a command instead of keeping the text.
+It can do that because of the order in which the browser delivers a keystroke:
+the event travels down through the page before it reaches the elements that
+registered interest. Listening on the way down means being called first, while
+ChatGPT's listener is still waiting its turn. Two calls then end it:
 
-## What's new since step 2
+| Call | Does |
+|---|---|
+| `preventDefault()` | cancels the browser's default reaction to the key |
+| `stopImmediatePropagation()` | ends the event's journey and skips every remaining listener |
 
-**`selectors.js`** — the selectors moved out of `content.js` into their own
-file, as planned. It defines one global, `Page`, and `content.js` never calls
-`querySelector` itself. When OpenAI redesigns, you edit this file only.
+Both are needed. `preventDefault` alone leaves ChatGPT's listener free to run;
+`stopImmediatePropagation` alone can leave a browser default in place.
 
-**`coach.css`** — bubble styling, declared in the manifest so Chrome injects
-it alongside the script.
+Because Enter isn't the only way to submit, the same path runs for a click on
+the send button.
 
-**The gate** in `content.js`:
+## What counts as a command
 
 ```js
 const COMMAND_RE = /^\/coach:(\S*)$/;
 ```
 
-`^` anchors to the start of the string, `$` to the end. Together they mean
-the command must be the whole message. `\S*` captures the name.
+`^` anchors to the start of the message and `$` to the end, so the command must
+be the entire message. This is deliberate, and it's the rule most worth
+protecting:
 
-**The kill** — two calls that do different jobs:
-
-| Call | Does |
+| Typed | Result |
 |---|---|
-| `preventDefault()` | cancels the browser's default reaction to the key |
-| `stopPropagation()` | stops the journey, but other listeners on this same element still run |
-| `stopImmediatePropagation()` | stops the journey **and** skips every remaining listener here |
+| `/coach:status` | intercepted — bubble, nothing sent |
+| `/coach:status` then click send | intercepted — same bubble |
+| `/coach:staus` | intercepted — amber bubble, nothing sent |
+| `/coach:` | intercepted — amber bubble, empty name isn't a command |
+| `I ran /coach:status today` | **sent to the model** — a genuine prompt about the tool |
+| `/coach:status now` | **sent to the model** — trailing text means it isn't a bare command |
+| `hello` | sent to the model |
 
-We use the first and the third. `preventDefault` alone would leave ChatGPT's
-listener free to run; `stopImmediatePropagation` alone might leave a browser
-default in place.
+The two rows that send are the ones to be fussy about. If the anchoring breaks
+and they get swallowed, you lose the ability to ever discuss your own tool
+inside ChatGPT.
 
-**The bubble** — built with `createElement` and `textContent`, never
-`innerHTML`. Assigning a string to `innerHTML` treats it as markup, so a `<`
-or `&` in a response could break the page or inject something.
-`textContent` is inert.
+## Install
 
-## Three details that will bite if you change them
+There's no build step.
 
-**The kill must be synchronous.** `intercept()` contains no `await`, and must
-never contain one before `killEvent`. Once your listener hands control back
-to the browser, propagation has already finished and `preventDefault()`
-silently does nothing — no error, the message just sends. This doesn't matter
-yet, but in step 4 a fetch appears and it matters completely. The shape is
-set now so it never has to change.
+1. `chrome://extensions` → enable Developer mode
+2. **Load unpacked** → pick this folder
+3. Reload the chatgpt.com tab
+
+The console logs `[coach] ready — /coach:status /coach:feedback /coach:dashboard`
+when the content script has attached.
+
+## The files
+
+| File | Owns |
+|---|---|
+| `manifest.json` | which pages the extension runs on, and what it injects |
+| `selectors.js` | every assumption about ChatGPT's HTML — defines the `Page` global |
+| `content.js` | the command gate, the interception, and bubble rendering |
+| `coach.css` | bubble styling |
+
+The split between `selectors.js` and `content.js` is the point of the layout:
+`content.js` never calls `querySelector` itself. When OpenAI redesigns their
+page, `selectors.js` is the only file that needs repairing.
+
+Bubbles are labelled `coach · local` so a locally rendered answer is never
+mistaken for something the model said. That distinction matters more than the
+styling does.
+
+## Invariants
+
+Four things that break quietly if changed.
+
+**The kill must be synchronous.** `intercept()` contains no `await` and must
+never contain one before `killEvent`. Once your listener hands control back to
+the browser, propagation has already finished and `preventDefault()` silently
+does nothing — no error, the message just sends.
 
 **Clearing the composer needs an input event.** `Page.clearComposer()` empties
 the element *and* dispatches `new InputEvent('input')`. React keeps its own
-record of what it thinks is in the field and will put the old text back
+record of what it believes is in the field and will put the old text back
 without that nudge.
 
-**Unknown commands are swallowed, not passed through.** `/coach:staus` gets a
-bubble rather than being sent to the model. Letting it through would produce a
-confused reply about a plugin ChatGPT doesn't have. This is only safe because
-a bubble always appears — a silent swallow would look like the app froze.
+**Bubbles are built with `createElement` and `textContent`, never
+`innerHTML`.** Assigning a string to `innerHTML` treats it as markup, so a `<`
+or `&` in a response could break the page or inject something. `textContent` is
+inert by design.
 
-## The send button changed
-
-Step 2 listened for a click on any button. Step 3 requires it to be the send
-button specifically:
-
-```js
-if (!button || button !== Page.sendButton()) return;
-```
-
-Without that, clicking the × on a bubble would re-run `intercept()` while a
-command still sat in the composer.
+**The click listener checks for the send button specifically.** Not any button
+— otherwise clicking × on a bubble would re-run `intercept()` while a command
+still sat in the composer.
 
 ## Troubleshooting
 
-**Command sends to the model anyway.** `Page.composerText()` returned
-something the regex didn't match. Check in the console:
+**A command reaches the model anyway.** `Page.composerText()` returned
+something the regex didn't match. Type a command, then in the console run:
 
 ```js
 Page.composerText()
 ```
 
-Type a command first, then run it. If it returns `""`, the composer selector
-in `selectors.js` needs fixing. If it returns the text with something extra
-appended, the selector matched too large a container.
+`""` means the composer selector in `selectors.js` needs fixing. Text with
+something extra appended means the selector matched too large a container.
 
-**No bubble, and a console warning about mounting.** The `message` selectors
-in `selectors.js` are stale. Inspect an existing message in the Elements
-panel and add its selector.
+**No bubble, and a console warning about mounting.** The `message` selectors are
+stale. Inspect an existing message in the Elements panel and add its selector.
 
-**Composer keeps the text after a command.** The input event isn't reaching
+**The composer keeps the text after a command.** The input event isn't reaching
 React. Try dispatching a `beforeinput` event as well in `clearComposer`.
 
-**Two bubbles per command.** Both step 2 and step 3 are loaded, or the click
-and keydown listeners are both firing. Disable the step 2 extension.
+**Two bubbles per command.** Another build of this extension is also loaded, or
+both the keydown and click listeners are firing for one submit.
 
-## Next
+## Scope today
 
-Step 4 replaces the `RESPONSES` object with a call to your Python service.
-That needs two new things: a `worker.js` service worker to make the fetch
-(chatgpt.com's CSP blocks the content script from reaching `127.0.0.1`), and
-a `host_permissions` entry in the manifest. `intercept()` itself barely
-changes — `answer()` becomes async, and the kill above it stays exactly where
-it is.
+Answers are literal strings in the `RESPONSES` object in `content.js`. Nothing
+is fetched, nothing is stored, and no conversation content is captured or
+transmitted. The extension reads the composer, and only the composer.
