@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Coach — step 2 (read only)",
+  "version": "0.2.0",
+  "description": "Logs the composer text on every Enter. Intercepts nothing.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
