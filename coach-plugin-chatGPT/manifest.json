@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Coach — step 2 (read only)",
-  "version": "0.2.0",
-  "description": "Logs the composer text on every Enter. Intercepts nothing.",
+  "name": "Coach — step 3 (intercept)",
+  "version": "0.3.0",
+  "description": "Intercepts /coach: commands and renders a hardcoded bubble. No network.",
   "content_scripts": [
     {
       "matches": [
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["selectors.js", "content.js"],
+      "css": ["coach.css"],
       "run_at": "document_idle"
     }
   ]

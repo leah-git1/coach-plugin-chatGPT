@@ -1,78 +1,118 @@
-// content.js — STEP 2: read only.
+// content.js — STEP 3: intercept.
 //
-// This file logs. It does not intercept. There is no preventDefault and no
-// stopImmediatePropagation anywhere below, which means every message you
-// type still reaches ChatGPT exactly as before.
+// New since step 2:
+//   1. a regex gate, so only a bare /coach:<name> is acted on
+//   2. the kill, so ChatGPT never receives the command
+//   3. a bubble rendered into the thread
 //
-// Its only job is to answer one question: does my selector find the
-// composer, and is the text there when I read it?
+// Still no network and no Python. The responses below are literal strings.
 
-// Tried in order, first match wins. This list is the only thing that will
-// break when OpenAI redesigns their page, which is why it sits alone at the
-// top. In step 3 it moves into its own selectors.js file.
-const COMPOSER_SELECTORS = [
-  '#prompt-textarea',
-  'div[contenteditable="true"]',
-  'textarea[data-id]',
-];
+// ^ and $ anchor to the whole message. This is deliberate: "I ran
+// /coach:status today" is a genuine prompt about the tool and belongs to
+// the model, not to us. \S* captures the command name.
+const COMMAND_RE = /^\/coach:(\S*)$/;
 
-function findComposer() {
-  for (const selector of COMPOSER_SELECTORS) {
-    const el = document.querySelector(selector);
-    if (el) return { el, selector };
+// Hardcoded for this step. In step 4 these come from the Python service.
+const RESPONSES = {
+  status: 'Your request to status was received.',
+  feedback: 'Your request to feedback was received.',
+  dashboard: 'Your request to dashboard was received.',
+};
+
+function killEvent(event) {
+  // Cancels the browser's default reaction to the key.
+  event.preventDefault();
+  // Ends the event's journey entirely, so ChatGPT's own listener is never
+  // called. Without this, preventDefault alone would not stop their code.
+  event.stopImmediatePropagation();
+}
+
+// Built with createElement rather than innerHTML. Assigning a string to
+// innerHTML would treat it as markup, so any < or & in a response could
+// break the page or inject something. textContent is inert by design.
+function renderBubble(title, body, isWarning) {
+  const wrapper = document.createElement('div');
+  wrapper.className = isWarning ? 'coach-bubble coach-bubble--warn' : 'coach-bubble';
+  wrapper.setAttribute('role', 'status');
+
+  const head = document.createElement('div');
+  head.className = 'coach-bubble__head';
+
+  const name = document.createElement('span');
+  name.className = 'coach-bubble__title';
+  name.textContent = title;
+
+  // So a locally-rendered bubble is never mistaken for something the model
+  // said. This distinction matters more than the styling does.
+  const tag = document.createElement('span');
+  tag.className = 'coach-bubble__tag';
+  tag.textContent = 'coach · local';
+
+  const dismiss = document.createElement('button');
+  dismiss.className = 'coach-bubble__dismiss';
+  dismiss.type = 'button';
+  dismiss.setAttribute('aria-label', 'Dismiss');
+  dismiss.textContent = '×';
+  dismiss.addEventListener('click', () => wrapper.remove());
+
+  head.append(name, tag, dismiss);
+
+  const text = document.createElement('pre');
+  text.className = 'coach-bubble__body';
+  text.textContent = body;
+
+  wrapper.append(head, text);
+
+  if (!Page.mount(wrapper)) {
+    console.warn('[coach] nowhere to mount the bubble — selectors need repair');
+    return;
   }
-  return null;
+  wrapper.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
-function readComposer() {
-  const found = findComposer();
-  if (!found) return null;
-  const { el, selector } = found;
-  // A contenteditable div holds text in innerText; a textarea holds it in
-  // value. ChatGPT currently uses the former, but the fallback costs one
-  // line and saves a confusing empty string later.
-  const raw = el.tagName === 'TEXTAREA' ? el.value : el.innerText;
-  return { text: raw.trim(), selector };
-}
+function answer(commandName) {
+  const body = RESPONSES[commandName];
 
-function onSend(source) {
-  const result = readComposer();
-
-  if (result === null) {
-    console.warn('[coach] composer NOT FOUND — none of these matched:', COMPOSER_SELECTORS);
+  if (body === undefined) {
+    // A near miss is still swallowed. Letting it through would send a
+    // confusing message to the model. But it must always produce a bubble,
+    // or the message would appear to vanish.
+    const available = Object.keys(RESPONSES).map((n) => `/coach:${n}`).join(', ');
+    renderBubble(`/coach:${commandName || '?'}`, `Unknown command.\nAvailable: ${available}`, true);
     return;
   }
 
-  // JSON.stringify so trailing spaces and newlines are visible rather than
-  // invisible. An empty string looks like "" instead of nothing at all.
-  console.log(
-    `[coach] ${source} | selector: ${result.selector} | text: ${JSON.stringify(result.text)}`
-  );
+  renderBubble(`/coach:${commandName}`, body, false);
 }
 
-// capture: true — the third argument. Even though this step intercepts
-// nothing, reading in the capture phase matters: the event has not reached
-// ChatGPT's code yet, so the composer still holds your text. Read in the
-// bubble phase and it may already have been cleared.
+// Entirely synchronous. The event either dies here or passes through
+// untouched. Nothing in this function may await — once control returns to
+// the browser, propagation has finished and preventDefault does nothing.
+function intercept(event) {
+  const match = Page.composerText().match(COMMAND_RE);
+  if (!match) return;   // not a command: pass through to React and the model
+
+  killEvent(event);
+  Page.clearComposer();
+  answer(match[1]);
+}
+
 window.addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter') return;   // any other key is not a send
-  if (event.shiftKey) return;          // shift+enter inserts a newline
-  if (event.isComposing) return;       // an IME is mid-word, not a send
-  onSend('enter');
+  if (event.key !== 'Enter') return;
+  if (event.shiftKey) return;
+  if (event.isComposing) return;
+  intercept(event);
 }, true);
 
-// Clicking send is the same event as far as we care. Included now so the
-// gap does not surprise you in step 3.
+// Step 2 listened on any button. Now it must be the send button
+// specifically, or clicking Dismiss on a bubble would re-trigger the whole
+// path while a command sits in the composer.
 window.addEventListener('click', (event) => {
   const button = event.target.closest?.('button');
-  if (!button) return;
-  onSend('click');
+  if (!button || button !== Page.sendButton()) return;
+  intercept(event);
 }, true);
 
-// A startup line, so an empty console tells you the script never ran rather
-// than leaving you guessing.
-const atLoad = findComposer();
 console.log(
-  '[coach] step 2 ready.',
-  atLoad ? `composer found via ${atLoad.selector}` : 'composer not found at load (may appear later)'
+  `[coach] ready — ${Object.keys(RESPONSES).map((n) => `/coach:${n}`).join(' ')}`
 );
