@@ -73,13 +73,13 @@ inside ChatGPT.
 There's no build step for the extension.
 
 1. Start the service from the repo root:
-   `uvicorn server:app --host 127.0.0.1 --port 8765 --reload`
+   `uvicorn server:app --host 127.0.0.1 --port 8787 --reload`
 2. `chrome://extensions` → enable Developer mode
 3. **Load unpacked** → pick the `extension/` folder, not the repo root
 4. Reload the chatgpt.com tab
 
 The console logs
-`[coach] ready — /coach:status /coach:feedback /coach:dashboard → http://127.0.0.1:8765`
+`[coach] ready — /coach:status /coach:feedback /coach:dashboard`
 when the content script has attached.
 
 The commands are still caught with the service down — you just get an amber
@@ -171,7 +171,7 @@ React. Try dispatching a `beforeinput` event as well in `clearComposer`.
 both the keydown and click listeners are firing for one submit.
 
 **Every command says the service is unreachable.** Open
-`http://127.0.0.1:8765/health` in a tab first. If it doesn't answer, the service
+`http://127.0.0.1:8787/health` in a tab first. If it doesn't answer, the service
 isn't running and nothing in the extension is at fault. If it does answer, the
 worker is the place to look: `chrome://extensions` → **service worker** opens
 its own console, separate from the page's, and the failing fetch appears there.
@@ -182,7 +182,7 @@ tab.
 
 ## Scope today
 
-Answers come from `server.py` on `127.0.0.1:8765`, which returns a fixed string
+Answers come from `server.py` on `127.0.0.1:8787`, which returns a fixed string
 per command. Nothing is stored, and no conversation content is captured or
 transmitted — the only thing that ever leaves the page is the command name, and
 only to your own machine. The extension reads the composer, and only the

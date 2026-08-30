@@ -5,7 +5,7 @@ Three endpoints, one per command, each returning a hardcoded string. No
 storage, no analysis. The point of this phase is to prove the service runs
 and answers, so run it and hit it with curl.
 
-    uvicorn server:app --host 127.0.0.1 --port 8765 --reload
+    uvicorn server:app --host 127.0.0.1 --port 8787 --reload
 
 Run it from the repo root. The browser half lives in extension/ and Python
 never writes there, which is the point of the split: Chrome refuses to load
@@ -30,7 +30,7 @@ app.add_middleware(
     allow_methods=["GET"],
 )
 
-PORT_HINT = "http://127.0.0.1:8765"
+PORT_HINT = "http://127.0.0.1:8787"
 
 
 @app.get("/health")

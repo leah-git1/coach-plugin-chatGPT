@@ -126,7 +126,7 @@ async function ask(commandName, bubble) {
     `Could not reach the coach service at ${(reply && reply.service) || 'the local service'}\n` +
     `${(reply && reply.error) || 'the extension background sent no reply'}\n\n` +
     'Start it with:\n' +
-    '  uvicorn server:app --host 127.0.0.1 --port 8765'
+    '  uvicorn server:app --host 127.0.0.1 --port 8787'
   );
 }
 

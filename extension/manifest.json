@@ -3,7 +3,7 @@
   "name": "Coach — step 4 (local service)",
   "version": "0.4.0",
   "description": "Intercepts /coach: commands and answers them from the local coach service.",
-  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "host_permissions": ["http://127.0.0.1:8787/*"],
   "background": {
     "service_worker": "background.js"
   },

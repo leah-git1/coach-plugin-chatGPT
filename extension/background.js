@@ -10,7 +10,7 @@
 // manifest.json, and is subject to neither CORS nor that gate. This is the
 // pattern MV3 intends for reaching localhost.
 
-const SERVICE = 'http://127.0.0.1:8765';
+const SERVICE = 'http://127.0.0.1:8787';
 const TIMEOUT_MS = 4000;
 
 async function ask(commandName) {
