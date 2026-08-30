@@ -70,23 +70,40 @@ inside ChatGPT.
 
 ## Install
 
-There's no build step.
+There's no build step for the extension.
 
-1. `chrome://extensions` → enable Developer mode
-2. **Load unpacked** → pick this folder
-3. Reload the chatgpt.com tab
+1. Start the service from the repo root:
+   `uvicorn server:app --host 127.0.0.1 --port 8765 --reload`
+2. `chrome://extensions` → enable Developer mode
+3. **Load unpacked** → pick the `extension/` folder, not the repo root
+4. Reload the chatgpt.com tab
 
-The console logs `[coach] ready — /coach:status /coach:feedback /coach:dashboard`
+The console logs
+`[coach] ready — /coach:status /coach:feedback /coach:dashboard → http://127.0.0.1:8765`
 when the content script has attached.
+
+The commands are still caught with the service down — you just get an amber
+bubble saying it couldn't be reached, rather than an answer.
 
 ## The files
 
+Two halves that ship together and run apart. The browser half is everything
+under `extension/`; the machine half is `server.py` at the root.
+
 | File | Owns |
 |---|---|
-| `manifest.json` | which pages the extension runs on, and what it injects |
-| `selectors.js` | every assumption about ChatGPT's HTML — defines the `Page` global |
-| `content.js` | the command gate, the interception, and bubble rendering |
-| `coach.css` | bubble styling |
+| `extension/manifest.json` | which pages the extension runs on, what it injects, and which host it may reach |
+| `extension/background.js` | the only code that talks to the service |
+| `extension/selectors.js` | every assumption about ChatGPT's HTML — defines the `Page` global |
+| `extension/content.js` | the command gate, the interception, and bubble rendering |
+| `extension/coach.css` | bubble styling |
+| `server.py` | the local service that answers each command |
+
+The split is not tidiness. Chrome refuses to load an unpacked extension whose
+folder contains any name beginning with an underscore, and the moment Python
+imports `server.py` it writes a `__pycache__` directory beside it. With both
+halves in one folder, running the server broke the extension. A root that
+Python may litter and an `extension/` that it never touches is the fix.
 
 The split between `selectors.js` and `content.js` is the point of the layout:
 `content.js` never calls `querySelector` itself. When OpenAI redesigns their
@@ -119,6 +136,19 @@ inert by design.
 — otherwise clicking × on a bubble would re-run `intercept()` while a command
 still sat in the composer.
 
+**The fetch must stay in `background.js`.** Moving it into `content.js` looks
+like a simplification and fails in a way that is hard to read: a content
+script's requests carry the *page's* origin, so a call to `127.0.0.1` becomes a
+public HTTPS page reaching into the local network. Chrome preflights it and
+gates it behind Local Network Access, and the request hangs until the timeout
+rather than returning an error that names the cause. No header on the Python
+side fixes it. The background worker runs as the extension under
+`host_permissions` and is subject to neither rule.
+
+**`onMessage` must return `true`.** It signals that a reply is coming later.
+Return nothing and the channel closes the moment the listener does, the reply
+is silently dropped, and the bubble waits on its placeholder forever.
+
 ## Troubleshooting
 
 **A command reaches the model anyway.** `Page.composerText()` returned
@@ -140,8 +170,24 @@ React. Try dispatching a `beforeinput` event as well in `clearComposer`.
 **Two bubbles per command.** Another build of this extension is also loaded, or
 both the keydown and click listeners are firing for one submit.
 
+**Every command says the service is unreachable.** Open
+`http://127.0.0.1:8765/health` in a tab first. If it doesn't answer, the service
+isn't running and nothing in the extension is at fault. If it does answer, the
+worker is the place to look: `chrome://extensions` → **service worker** opens
+its own console, separate from the page's, and the failing fetch appears there.
+
+**"Receiving end does not exist."** The extension was reloaded while a ChatGPT
+tab stayed open, leaving a content script with no worker to talk to. Reload the
+tab.
+
 ## Scope today
 
-Answers are literal strings in the `RESPONSES` object in `content.js`. Nothing
-is fetched, nothing is stored, and no conversation content is captured or
-transmitted. The extension reads the composer, and only the composer.
+Answers come from `server.py` on `127.0.0.1:8765`, which returns a fixed string
+per command. Nothing is stored, and no conversation content is captured or
+transmitted — the only thing that ever leaves the page is the command name, and
+only to your own machine. The extension reads the composer, and only the
+composer.
+
+The command names live in `COMMANDS` in `content.js` rather than being fetched,
+so a typo is caught without a round trip and still gets its amber bubble when
+the service is off.

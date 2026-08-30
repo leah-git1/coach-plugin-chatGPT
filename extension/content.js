@@ -5,19 +5,23 @@
 //   2. the kill, so ChatGPT never receives the command
 //   3. a bubble rendered into the thread
 //
-// Still no network and no Python. The responses below are literal strings.
+// Since step 4 the answers come from the local Python service. The command
+// list stays here so a typo never needs a round trip, and so the extension
+// still behaves sanely with the service switched off.
 
 // ^ and $ anchor to the whole message. This is deliberate: "I ran
 // /coach:status today" is a genuine prompt about the tool and belongs to
 // the model, not to us. \S* captures the command name.
 const COMMAND_RE = /^\/coach:(\S*)$/;
 
-// Hardcoded for this step. In step 4 these come from the Python service.
-const RESPONSES = {
-  status: 'Your request to status was received.',
-  feedback: 'Your request to feedback was received.',
-  dashboard: 'Your request to dashboard was received.',
-};
+// The service URL and the fetch live in background.js, not here — a request
+// to 127.0.0.1 made from this file would carry chatgpt.com's origin and be
+// blocked. This file asks the background worker and renders what comes back.
+
+// Which names are real. Kept client-side on purpose: a near miss like
+// /coach:staus should not need the network, and should still be caught when
+// the service isn't running.
+const COMMANDS = ['status', 'feedback', 'dashboard'];
 
 function killEvent(event) {
   // Cancels the browser's default reaction to the key.
@@ -65,24 +69,65 @@ function renderBubble(title, body, isWarning) {
 
   if (!Page.mount(wrapper)) {
     console.warn('[coach] nowhere to mount the bubble — selectors need repair');
-    return;
+    return null;
   }
   wrapper.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+  // Handles rather than a re-query. The bubble is mounted before the answer
+  // exists, so the reply — or the failure — is written into it later. Holding
+  // the nodes keeps the no-querySelector-in-content.js rule intact.
+  return {
+    setTitle(value) { name.textContent = value; },
+    setBody(value) { text.textContent = value; },
+    setWarning(on) { wrapper.classList.toggle('coach-bubble--warn', on); },
+  };
 }
 
 function answer(commandName) {
-  const body = RESPONSES[commandName];
-
-  if (body === undefined) {
+  if (!COMMANDS.includes(commandName)) {
     // A near miss is still swallowed. Letting it through would send a
     // confusing message to the model. But it must always produce a bubble,
     // or the message would appear to vanish.
-    const available = Object.keys(RESPONSES).map((n) => `/coach:${n}`).join(', ');
+    const available = COMMANDS.map((n) => `/coach:${n}`).join(', ');
     renderBubble(`/coach:${commandName || '?'}`, `Unknown command.\nAvailable: ${available}`, true);
     return;
   }
 
-  renderBubble(`/coach:${commandName}`, body, false);
+  // The bubble goes up first, filled in when the service replies. The user
+  // has already lost their typed text by this point, so something must be on
+  // screen immediately whatever the network does next.
+  const bubble = renderBubble(`/coach:${commandName}`, '…', false);
+  if (!bubble) return;
+  ask(commandName, bubble);
+}
+
+// Every path through this ends in the bubble saying something. A swallowed
+// message with no visible answer is the one failure this must never produce.
+async function ask(commandName, bubble) {
+  let reply;
+
+  try {
+    reply = await chrome.runtime.sendMessage({ type: 'coach:ask', command: commandName });
+  } catch (error) {
+    // The background worker didn't answer at all. Nearly always means the
+    // extension was reloaded while this tab kept running the old content
+    // script, which is now orphaned from its worker.
+    reply = { ok: false, error: `${error.message} — reload the ChatGPT tab` };
+  }
+
+  if (reply && reply.ok) {
+    bubble.setTitle(reply.data.title || `/coach:${commandName}`);
+    bubble.setBody(reply.data.body || '(the service returned an empty body)');
+    return;
+  }
+
+  bubble.setWarning(true);
+  bubble.setBody(
+    `Could not reach the coach service at ${(reply && reply.service) || 'the local service'}\n` +
+    `${(reply && reply.error) || 'the extension background sent no reply'}\n\n` +
+    'Start it with:\n' +
+    '  uvicorn server:app --host 127.0.0.1 --port 8765'
+  );
 }
 
 // Entirely synchronous. The event either dies here or passes through
@@ -114,5 +159,5 @@ window.addEventListener('click', (event) => {
 }, true);
 
 console.log(
-  `[coach] ready — ${Object.keys(RESPONSES).map((n) => `/coach:${n}`).join(' ')}`
+  `[coach] ready — ${COMMANDS.map((n) => `/coach:${n}`).join(' ')}`
 );
