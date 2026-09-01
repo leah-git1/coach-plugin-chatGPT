@@ -11,7 +11,16 @@
 // pattern MV3 intends for reaching localhost.
 
 const SERVICE = 'http://127.0.0.1:8787';
-const TIMEOUT_MS = 4000;
+
+// Matches the CLI's DEFAULT_HTTP_TIMEOUT_MS, which is the informed number: /coach:feedback runs a
+// judge on the backend, and that is routinely slower than a few seconds. At the old 4000 the abort
+// fired while the request was still working, and the bubble blamed the local service for a call
+// that would have succeeded — the most misleading failure this can produce.
+//
+// The service answers a dead backend in about a second (it uses a short connect timeout), so a
+// backend that is simply not running still reports quickly. This ceiling only governs the slow
+// case, where waiting is correct.
+const TIMEOUT_MS = 40000;
 
 async function ask(commandName) {
   const response = await fetch(`${SERVICE}/${commandName}`, {

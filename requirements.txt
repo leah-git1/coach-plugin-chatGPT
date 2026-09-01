@@ -1,0 +1,5 @@
+# The service's three dependencies. Pinned: an unpinned FastAPI that changes its
+# lifespan or Query behaviour breaks the extension with no visible cause.
+fastapi==0.115.6
+httpx==0.28.1
+uvicorn==0.34.0

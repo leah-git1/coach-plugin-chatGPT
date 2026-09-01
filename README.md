@@ -70,13 +70,73 @@ inside ChatGPT.
 
 ## Install
 
-There's no build step for the extension.
+There's no build step for the extension. Two processes, then Chrome.
 
-1. Start the service from the repo root:
-   `uvicorn server:app --host 127.0.0.1 --port 8787 --reload`
-2. `chrome://extensions` → enable Developer mode
-3. **Load unpacked** → pick the `extension/` folder, not the repo root
-4. Reload the chatgpt.com tab
+`pip` puts `uvicorn.exe` in a Scripts directory that is not on PATH here, so **always start it as
+`python -m uvicorn`** — a bare `uvicorn` gives `CommandNotFoundException`.
+
+### Once
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Installing into the venv rather than `pip install fastapi uvicorn` globally keeps this off the
+user-wide site-packages, where a newer FastAPI arriving for some other project can break this one
+without touching it.
+
+### Every run — terminal 1, the backend on 8788
+
+It defaults to 8787, the same port as the extension's service, and the extension's port is baked
+into `manifest.json`. So the backend is the one that moves:
+
+```powershell
+$env:PORT = "8788"; bun run dev      # in evolve-coach/projects/backend
+```
+
+No Bun installed? This serves fixed stand-in data on 8788:
+
+```powershell
+.venv\Scripts\python.exe dev_backend_stub.py
+```
+
+The stub imports nothing outside the standard library, so the venv is not needed for its
+dependencies — it is needed to avoid the interpreter. This machine's **system** Python has
+`pip_system_certs` in its site-packages, which runs on every startup and imports the whole of pip's
+vendored `requests` before your script gets a line in: measured, `python -c pass` takes 1.5 s there
+against 0.10 s in the venv, and it has crashed startup outright with
+`Fatal Python error: init_import_site`. A venv disables user-site, so that hook never fires. Use
+`.venv\Scripts\python.exe` for anything in this project.
+
+### Every run — terminal 2, the service on 8787
+
+PowerShell has no inline `VAR=value cmd` form; set them first, on their own lines:
+
+```powershell
+.venv\Scripts\Activate.ps1
+$env:COACH_BACKEND_URL = "http://127.0.0.1:8788"
+$env:COACH_USER_ID = "you@example.com"
+python -m uvicorn server:app --host 127.0.0.1 --port 8787 --reload
+```
+
+`$env:` values last only for that window. A new terminal starts without them, and `/coach:status`
+then reports that no user is configured — which is the symptom to recognise, not a bug.
+
+Check both halves before touching Chrome:
+
+```powershell
+curl.exe -s http://127.0.0.1:8787/health
+```
+
+`"reachable": true` means terminal 1 is up; `"user_configured": true` means `COACH_USER_ID` is set.
+If `reachable` is false, nothing in the extension is at fault.
+
+### Every run — Chrome
+
+1. `chrome://extensions` → enable Developer mode
+2. **Load unpacked** → pick the `extension/` folder, not the repo root
+3. Reload the chatgpt.com tab
 
 The console logs
 `[coach] ready — /coach:status /coach:feedback /coach:dashboard`
@@ -84,6 +144,13 @@ when the content script has attached.
 
 The commands are still caught with the service down — you just get an amber
 bubble saying it couldn't be reached, rather than an answer.
+
+### A note on ports on Windows
+
+Windows lets a second process bind a port another process already holds, without an error. If two
+copies of the service are running, requests are split between them and edits appear to have no
+effect. `netstat -ano | findstr ":8787"` showing two LISTENING lines is the tell.
+
 
 ## The files
 
@@ -97,7 +164,9 @@ under `extension/`; the machine half is `server.py` at the root.
 | `extension/selectors.js` | every assumption about ChatGPT's HTML — defines the `Page` global |
 | `extension/content.js` | the command gate, the interception, and bubble rendering |
 | `extension/coach.css` | bubble styling |
-| `server.py` | the local service that answers each command |
+| `requirements.txt` | the service's three pinned dependencies |
+| `dev_backend_stub.py` | a stand-in for the Evolve Coach backend, for when Bun isn't available |
+| `server.py` | the surface adapter: turns each command into its Evolve Coach backend call and renders the reply |
 
 The split is not tidiness. Chrome refuses to load an unpacked extension whose
 folder contains any name beginning with an underscore, and the moment Python
@@ -182,11 +251,18 @@ tab.
 
 ## Scope today
 
-Answers come from `server.py` on `127.0.0.1:8787`, which returns a fixed string
-per command. Nothing is stored, and no conversation content is captured or
-transmitted — the only thing that ever leaves the page is the command name, and
-only to your own machine. The extension reads the composer, and only the
-composer.
+`server.py` on `127.0.0.1:8787` is a surface adapter, not a source of answers: it calls the Evolve
+Coach backend and renders the reply in the same words the CLI uses, so this surface and Claude Code
+read identically. `/coach:status` and `/coach:dashboard` are wired end to end.
+
+`/coach:feedback` is not, and cannot be without a decision: judging a prompt requires sending the
+prompt, and the extension deliberately sends only the command name. The endpoint already accepts
+`?prompt=`, so the wiring is one change away — but that change means capturing conversation
+content, which is a product decision rather than a missing line of code.
+
+Nothing is stored. Apart from the configured `COACH_USER_ID`, nothing that leaves the page goes
+anywhere but your own machine, and no conversation content is captured. The extension reads the
+composer, and only the composer.
 
 The command names live in `COMMANDS` in `content.js` rather than being fetched,
 so a typo is caught without a round trip and still gets its amber bubble when
